@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Météo Marine - Région Boeny (Enhanced)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Try multiple CDN sources for leaflet-velocity -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@1.4.1/dist/leaflet-velocity.min.js" onerror="loadVelocityFallback()"></script>
+  <style>
+    :root {
+      --primary-bg: rgba(255, 255, 255, 0.95);
+      --secondary-bg: rgba(248, 250, 252, 0.98);
+      --accent-color: #3b82f6;
+      --text-primary: #1f2937;
+      --text-secondary: #6b7280;
+      --shadow: 0 10px 25px rgba(0,0,0,.15);
+      --shadow-sm: 0 4px 12px rgba(0,0,0,.08);
+      --border-radius: 16px;
+      --border-radius-sm: 12px;
+    }
+    
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: var(--text-primary);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      overflow: hidden;
+    }
+    
+    #map { 
+      height: 100vh; 
+      width: 100%; 
+      position: relative;
+    }
+    
+    /* Enhanced Control Panel */
+    .panel {
+      position: absolute; 
+      left: 16px; 
+      top: 16px; 
+      z-index: 1000;
+      background: var(--primary-bg); 
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 20px; 
+      border-radius: var(--border-radius); 
+      box-shadow: var(--shadow);
+      min-width: 280px;
+      max-width: 320px;
+      border: 1px solid rgba(255,255,255,0.2);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .panel.collapsed {
+      transform: translateX(-75%);
+      opacity: 0.9;
+    }
+    
+    .panel h3 { 
+      margin: 0 0 16px; 
+      font-size: 18px; 
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .stats { 
+      font-size: 14px; 
+      line-height: 1.6; 
+      margin: 16px 0;
+      padding: 16px;
+      background: var(--secondary-bg);
+      border-radius: var(--border-radius-sm);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+    
+    .row { 
+      display: flex; 
+      gap: 12px; 
+      align-items: center; 
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      border: 0; 
+      border-radius: var(--border-radius-sm); 
+      padding: 12px 16px; 
+      cursor: pointer;
+      box-shadow: var(--shadow-sm); 
+      background: #fff;
+      font-weight: 600; 
+      font-size: 14px;
+      color: var(--text-primary);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 44px; /* Better touch targets */
+    }
+    
+    .btn:hover:not(:disabled) { 
+      transform: translateY(-2px); 
+      box-shadow: 0 8px 20px rgba(0,0,0,.15);
+      background: #f8fafc;
+    }
+    
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    
+    .btn.primary {
+      background: var(--accent-color);
+      color: white;
+    }
+    
+    .btn.primary:hover:not(:disabled) {
+      background: #2563eb;
+    }
+    
+    .btn:disabled { 
+      opacity: 0.6; 
+      cursor: not-allowed; 
+      transform: none !important;
+    }
+    
+    .badge { 
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px; 
+      border-radius: 20px; 
+      background: #eff6ff; 
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent-color);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+    
+    .legend { 
+      position: absolute; 
+      right: 16px; 
+      bottom: 16px; 
+      z-index: 1000; 
+      background: var(--primary-bg); 
+      border-radius: var(--border-radius-sm); 
+      box-shadow: var(--shadow); 
+      padding: 16px; 
+      font-size: 13px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.2);
+      max-width: 200px;
+    }
+    
+    .spinner { 
+      width: 18px; 
+      height: 18px; 
+      border: 2px solid #e5e7eb; 
+      border-top-color: var(--accent-color); 
+      border-radius: 50%; 
+      animation: spin 1s linear infinite; 
+      display: inline-block; 
+    }
+    
+    @keyframes spin { 
+      to { transform: rotate(360deg); } 
+    }
+    
+    .toast { 
+      position: absolute; 
+      left: 50%; 
+      transform: translateX(-50%); 
+      top: 20px; 
+      z-index: 1100; 
+      background: rgba(17, 24, 39, 0.95); 
+      color: #fff; 
+      padding: 12px 20px; 
+      border-radius: var(--border-radius-sm); 
+      box-shadow: var(--shadow); 
+      display: none;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    .toggle-panel {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 1001;
+      background: var(--primary-bg);
+      border: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    
+    select {
+      appearance: none;
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: var(--border-radius-sm);
+      padding: 12px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      min-width: 80px;
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+      background-position: right 12px center;
+      background-repeat: no-repeat;
+      background-size: 16px;
+      padding-right: 40px;
+    }
+    
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .control-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+    
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+      .panel {
+        left: 12px;
+        top: 12px;
+        right: 12px;
+        min-width: unset;
+        max-width: unset;
+        width: calc(100% - 24px);
+        padding: 16px;
+      }
+      
+      .panel.collapsed {
+        transform: translateY(-80%);
+        opacity: 0.9;
+      }
+      
+      .legend {
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        width: calc(100% - 24px);
+        max-width: unset;
+      }
+      
+      .row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      
+      .btn {
+        justify-content: center;
+        width: 100%;
+      }
+      
+      .toggle-panel {
+        display: flex;
+        top: 12px;
+        left: auto;
+        right: 12px;
+        transform: none;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .panel {
+        font-size: 14px;
+      }
+      
+      .panel h3 {
+        font-size: 16px;
+      }
+      
+      .stats {
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <button class="toggle-panel" id="toggle-panel">☰</button>
+
+  <div class="panel" id="control-panel">
+    <h3>
+      <span>🌊</span>
+      Météo Marine — Mahajanga
+    </h3>
+    
+    <div class="stats" id="weather-info">
+      Chargement des données… <span class="spinner"></span>
+    </div>
+    
+    <div class="row">
+      <button class="btn primary" id="refresh-btn">
+        <span>🔄</span>
+        Actualiser
+      </button>
+      <div class="badge" id="timestamp">--:--</div>
+    </div>
+    
+    <div class="control-group">
+      <label class="control-label" for="density">Résolution de la grille</label>
+      <div class="row">
+        <select id="density" class="btn">
+          <option value="8">8×8 (Standard)</option>
+          <option value="10" selected>10×10 (Dense)</option>
+          <option value="12">12×12 (Très dense)</option>
+          <option value="15">15×15 (Maximum)</option>
+        </select>
+        <button class="btn" id="apply-grid">Appliquer</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <div class="row">
+        <button class="btn" id="toggle-animation">⏸️ Pause</button>
+        <button class="btn" id="fullscreen-btn">⛶ Plein écran</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Légende des vents</div>
+    <div style="font-size: 12px; line-height: 1.4;">
+      <div>• Particules animées = direction du vent</div>
+      <div>• Couleurs = vitesse (bleu → rouge)</div>
+      <div>• Zone couverte: Ville de Mahajanga</div>
+    </div>
+    <div style="font-size: 11px; opacity: 0.7; margin-top: 8px; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 8px;">
+      Source: Open-Meteo API • Mahajanga, Madagascar
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Fallback function to load velocity library from alternative sources
+    function loadVelocityFallback() {
+      console.log('Trying alternative CDN for leaflet-velocity...');
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/leaflet-velocity@1.4.1/dist/leaflet-velocity.min.js';
+      script.onerror = function() {
+        console.log('All CDN sources failed, using custom wind visualization');
+        window.velocityLibraryFailed = true;
+      };
+      document.head.appendChild(script);
+    }
+
+    // Custom wind visualization when velocity library is not available
+    function createCustomWindLayer(windData, maxVelocity) {
+      if (!windData || windData.length < 2) return null;
+      
+      const uData = windData[0].data;
+      const vData = windData[1].data;
+      const header = windData[0].header;
+      
+      // Create a canvas overlay for wind visualization
+      const canvas = document.createElement('canvas');
+      const canvasOverlay = L.canvasLayer = L.canvasLayer || L.Layer.extend({
+        initialize: function(options) {
+          L.Layer.prototype.initialize.call(this, options);
+          this._canvas = canvas;
+          this._ctx = canvas.getContext('2d');
+        },
+        
+        onAdd: function(map) {
+          this._map = map;
+          map.getPanes().overlayPane.appendChild(this._canvas);
+          this._reset();
+          map.on('viewreset', this._reset, this);
+          map.on('zoom', this._reset, this);
+          this._draw();
+        },
+        
+        onRemove: function(map) {
+          map.getPanes().overlayPane.removeChild(this._canvas);
+          map.off('viewreset', this._reset, this);
+          map.off('zoom', this._reset, this);
+        },
+        
+        _reset: function() {
+          const bounds = this._map.getBounds();
+          const size = this._map.getSize();
+          const topLeft = this._map.latLngToLayerPoint(bounds.getNorthWest());
+          
+          this._canvas.width = size.x;
+          this._canvas.height = size.y;
+          this._canvas.style.width = size.x + 'px';
+          this._canvas.style.height = size.y + 'px';
+          this._canvas.style.position = 'absolute';
+          this._canvas.style.left = topLeft.x + 'px';
+          this._canvas.style.top = topLeft.y + 'px';
+          this._canvas.style.pointerEvents = 'none';
+        },
+        
+        _draw: function() {
+          const ctx = this._ctx;
+          ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+          
+          // Draw wind arrows
+          for (let i = 0; i < header.ny; i += 2) {
+            for (let j = 0; j < header.nx; j += 2) {
+              const idx = i * header.nx + j;
+              const u = uData[idx];
+              const v = vData[idx];
+              const speed = Math.sqrt(u * u + v * v);
+              
+              if (speed > 0.5) {
+                const lat = header.la1 - i * Math.abs(header.dy);
+                const lon = header.lo1 + j * header.dx;
+                const point = this._map.latLngToLayerPoint([lat, lon]);
+                
+                // Color based on speed
+                const intensity = Math.min(speed / maxVelocity, 1);
+                const hue = 240 - (intensity * 120); // Blue to red
+                ctx.strokeStyle = `hsl(${hue}, 70%, 50%)`;
+                ctx.lineWidth = 2;
+                
+                // Calculate arrow direction
+                const angle = Math.atan2(u, v);
+                const length = 20;
+                
+                // Draw arrow
+                ctx.beginPath();
+                ctx.moveTo(point.x, point.y);
+                ctx.lineTo(
+                  point.x + length * Math.sin(angle),
+                  point.y + length * Math.cos(angle)
+                );
+                ctx.stroke();
+                
+                // Draw arrowhead
+                const headLength = 8;
+                const headAngle = Math.PI / 6;
+                ctx.beginPath();
+                ctx.moveTo(
+                  point.x + length * Math.sin(angle),
+                  point.y + length * Math.cos(angle)
+                );
+                ctx.lineTo(
+                  point.x + length * Math.sin(angle) - headLength * Math.sin(angle - headAngle),
+                  point.y + length * Math.cos(angle) - headLength * Math.cos(angle - headAngle)
+                );
+                ctx.moveTo(
+                  point.x + length * Math.sin(angle),
+                  point.y + length * Math.cos(angle)
+                );
+                ctx.lineTo(
+                  point.x + length * Math.sin(angle) - headLength * Math.sin(angle + headAngle),
+                  point.y + length * Math.cos(angle) - headLength * Math.cos(angle + headAngle)
+                );
+                ctx.stroke();
+              }
+            }
+          }
+        }
+      });
+      
+      return new canvasOverlay();
+    }
+    // Enhanced map initialization focused on Mahajanga city
+    const map = L.map('map', { 
+      zoomControl: true,
+      attributionControl: true,
+      preferCanvas: true // Better performance for animations
+    }).setView([-15.7167, 46.3167], 12); // Centered precisely on Mahajanga city, closer zoom
+
+    // Add multiple tile layer options
+    const tileLayers = {
+      'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }),
+      'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '&copy; <a href="https://www.arcgis.com/">ArcGIS</a>'
+      })
+    };
+
+    tileLayers['OpenStreetMap'].addTo(map);
+    L.control.layers(tileLayers).addTo(map);
+
+    // Mahajanga city bounds - properly centered on the actual city location
+    let minLat = -15.8, maxLat = -15.65, minLon = 46.25, maxLon = 46.38;
+
+    // Global state
+    let gridSize = 10; // default 10×10 for better city coverage
+    let velocityLayer = null;
+    let autoTimer = null;
+    let animationPaused = false;
+
+    const $info = document.getElementById('weather-info');
+    const $time = document.getElementById('timestamp');
+    const $toast = document.getElementById('toast');
+    const $panel = document.getElementById('control-panel');
+    const $togglePanel = document.getElementById('toggle-panel');
+
+    // Enhanced toast with better styling
+    function toast(msg, ms = 3000, type = 'info') {
+      $toast.textContent = msg; 
+      $toast.style.display = 'block';
+      $toast.style.background = type === 'error' ? 'rgba(239, 68, 68, 0.95)' : 'rgba(17, 24, 39, 0.95)';
+      setTimeout(() => $toast.style.display = 'none', ms);
+    }
+
+    function buildGrid(n) {
+      const latStep = (maxLat - minLat) / (n - 1);
+      const lonStep = (maxLon - minLon) / (n - 1);
+      const lats = Array.from({ length: n }, (_, i) => maxLat - i * latStep);
+      const lons = Array.from({ length: n }, (_, j) => minLon + j * lonStep);
+      return { lats, lons, latStep, lonStep, nx: n, ny: n };
+    }
+
+    function uvFromSpeedDir(speed, deg) {
+      const rad = (deg * Math.PI) / 180;
+      const u = -speed * Math.sin(rad);
+      const v = -speed * Math.cos(rad);
+      return { u, v };
+    }
+
+    async function fetchPoint(lat, lon, controller) {
+      const url = new URL('https://api.open-meteo.com/v1/forecast');
+      url.search = new URLSearchParams({
+        latitude: lat.toFixed(3),
+        longitude: lon.toFixed(3),
+        hourly: 'wind_speed_10m,wind_direction_10m',
+        cell_selection: 'sea', // Focus on marine data for coastal Boeny region
+        timezone: 'Indian/Antananarivo'
+      }).toString();
+
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    async function fetchGridData(n) {
+      const { lats, lons, latStep, lonStep, nx, ny } = buildGrid(n);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000); // Increased timeout
+
+      try {
+        // Batch requests to avoid overwhelming the API
+        const batchSize = 10;
+        const results = [];
+        
+        for (let batch = 0; batch < Math.ceil(nx * ny / batchSize); batch++) {
+          const batchPromises = [];
+          const start = batch * batchSize;
+          const end = Math.min(start + batchSize, nx * ny);
+          
+          for (let idx = start; idx < end; idx++) {
+            const i = Math.floor(idx / nx);
+            const j = idx % nx;
+            batchPromises.push(fetchPoint(lats[i], lons[j], controller));
+          }
+          
+          const batchResults = await Promise.all(batchPromises);
+          results.push(...batchResults);
+          
+          // Small delay between batches to be nice to the API
+          if (batch < Math.ceil(nx * ny / batchSize) - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+
+        const times = results[0]?.hourly?.time || [];
+        if (!times.length) throw new Error('Données horaires indisponibles');
+
+        const now = new Date();
+        let currentIndex = times.findIndex(t => new Date(t) >= now);
+        if (currentIndex === -1) currentIndex = times.length - 1;
+        if (currentIndex > 0) currentIndex -= 1;
+
+        const us = new Array(nx * ny).fill(0);
+        const vs = new Array(nx * ny).fill(0);
+        let sumSpeed = 0, count = 0, maxSpeed = 0;
+
+        let k = 0;
+        for (let i = 0; i < ny; i++) {
+          for (let j = 0; j < nx; j++) {
+            const r = results[k++];
+            const speeds = r?.hourly?.wind_speed_10m || [];
+            const dirs = r?.hourly?.wind_direction_10m || [];
+            const s = Number(speeds[currentIndex]);
+            const d = Number(dirs[currentIndex]);
+            if (Number.isFinite(s) && Number.isFinite(d)) {
+              const { u, v } = uvFromSpeedDir(s, d);
+              us[i * nx + j] = u;
+              vs[i * nx + j] = v;
+              sumSpeed += s; count++;
+              if (s > maxSpeed) maxSpeed = s;
+            }
+          }
+        }
+
+        const avgSpeed = count ? sumSpeed / count : 0;
+        const refTimeIso = new Date(times[currentIndex]).toISOString();
+
+        const headerBase = {
+          parameterCategory: 2,
+          parameterCategoryName: 'Momentum',
+          parameterUnit: 'm.s-1',
+          dx: lonStep,
+          dy: -latStep,
+          la1: lats[0],
+          la2: lats[lats.length - 1],
+          lo1: lons[0],
+          lo2: lons[lons.length - 1],
+          nx, ny,
+          refTime: refTimeIso
+        };
+
+        const windData = [
+          { header: { ...headerBase, parameterNumber: 2, parameterNumberName: 'eastward_wind' }, data: us },
+          { header: { ...headerBase, parameterNumber: 3, parameterNumberName: 'northward_wind' }, data: vs }
+        ];
+
+        return { windData, avgSpeed, count, total: nx * ny, maxSpeed, refTimeIso };
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    function updateInfo({ avgSpeed, count, total, refTimeIso, maxSpeed }) {
+      const coverage = ((count / total) * 100).toFixed(1);
+      $info.innerHTML = `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span><strong>Vitesse moyenne:</strong></span>
+          <span><strong>${avgSpeed.toFixed(1)} m/s</strong></span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span><strong>Vitesse max:</strong></span>
+          <span><strong>${maxSpeed.toFixed(1)} m/s</strong></span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>Couverture données:</span>
+          <span>${coverage}% (${count}/${total})</span>
+        </div>
+      `;
+      $time.textContent = new Date(refTimeIso).toLocaleString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit'
+      });
+    }
+
+    function renderVelocity(windData, maxVelocity) {
+      if (velocityLayer) {
+        map.removeLayer(velocityLayer);
+        velocityLayer = null;
+      }
+      
+      console.log('Wind data:', windData);
+      console.log('Max velocity:', maxVelocity);
+      
+      // Try to use leaflet-velocity if available
+      if (L.velocityLayer && !window.velocityLibraryFailed) {
+        try {
+          velocityLayer = L.velocityLayer({
+            data: windData,
+            displayValues: true,
+            displayOptions: {
+              velocityType: 'Vent',
+              position: 'bottomleft',
+              emptyString: 'Pas de données vent',
+              angleConvention: 'meteo',
+              speedUnit: 'm/s',
+              showCardinal: true
+            },
+            minVelocity: 0,
+            maxVelocity: Math.max(10, Math.ceil(maxVelocity * 1.5)),
+            velocityScale: 0.005,
+            colorScale: [
+              '#3288bd', '#66c2a5', '#abdda4', '#e6f598', 
+              '#fee08b', '#fdae61', '#f46d43', '#d53e4f'
+            ],
+            particleAge: 64,
+            particleMultiplier: 1/250,
+            frameRate: 20,
+            opacity: 0.97
+          });
+          
+          velocityLayer.addTo(map);
+          console.log('Velocity layer added to map');
+          toast('Animation des vents activée');
+          return;
+        } catch (err) {
+          console.error('Velocity layer failed:', err);
+        }
+      }
+      
+      // Fallback to custom wind visualization
+      console.log('Using custom wind visualization');
+      velocityLayer = createCustomWindLayer(windData, maxVelocity);
+      if (velocityLayer) {
+        velocityLayer.addTo(map);
+        toast('Visualisation des vents (mode compatibilité)');
+      }
+    }
+
+    async function loadAndRender(n = gridSize) {
+      try {
+        document.getElementById('refresh-btn').disabled = true;
+        $info.innerHTML = 'Chargement des données… <span class="spinner"></span>';
+        
+        const payload = await fetchGridData(n);
+        updateInfo(payload);
+        renderVelocity(payload.windData, payload.maxSpeed);
+        toast(`Données vent mises à jour (${payload.count} points)`);
+      } catch (err) {
+        console.error('Erreur lors du chargement:', err);
+        $info.innerHTML = `<div style="color: #dc2626;">Erreur: ${err.message}</div>`;
+        toast('Échec du chargement des données', 4000, 'error');
+      } finally {
+        document.getElementById('refresh-btn').disabled = false;
+      }
+    }
+
+    function startAuto() {
+      if (autoTimer) clearInterval(autoTimer);
+      autoTimer = setInterval(() => loadAndRender(gridSize), 30 * 60 * 1000);
+    }
+
+    // Enhanced controls with better UX
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+      loadAndRender(gridSize);
+    });
+
+    document.getElementById('apply-grid').addEventListener('click', () => {
+      const n = Number(document.getElementById('density').value);
+      if (n !== gridSize) {
+        gridSize = n;
+        toast(`Résolution changée: ${n}×${n}`);
+        loadAndRender(n);
+      }
+    });
+
+    document.getElementById('toggle-animation').addEventListener('click', (e) => {
+      animationPaused = !animationPaused;
+      if (velocityLayer) {
+        if (animationPaused) {
+          map.removeLayer(velocityLayer);
+          e.target.innerHTML = '▶️ Reprendre';
+          toast('Animation en pause');
+        } else {
+          map.addLayer(velocityLayer);
+          e.target.innerHTML = '⏸️ Pause';
+          toast('Animation reprise');
+        }
+      }
+    });
+
+    document.getElementById('fullscreen-btn').addEventListener('click', () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen();
+      }
+    });
+
+    // Panel toggle for mobile
+    $togglePanel.addEventListener('click', () => {
+      $panel.classList.toggle('collapsed');
+    });
+
+    // Auto-hide panel on small screens after interaction
+    if (window.innerWidth <= 768) {
+      setTimeout(() => {
+        $panel.classList.add('collapsed');
+      }, 5000);
+    }
+
+    // Initialize
+    loadAndRender(gridSize);
+    startAuto();
+
+    // Handle fullscreen changes
+    document.addEventListener('fullscreenchange', () => {
+      const btn = document.getElementById('fullscreen-btn');
+      btn.innerHTML = document.fullscreenElement ? '⛶ Quitter' : '⛶ Plein écran';
+    });
+
+    // Handle orientation changes on mobile
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 500);
+    });
+  </script>
+</body>
+</html>
