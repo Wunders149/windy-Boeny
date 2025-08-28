@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Météo Marine - Région Boeny</title>
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/x-icon" href="image/favicon.ico">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- Try multiple CDN sources for leaflet-velocity -->
@@ -241,45 +241,62 @@
     
     /* Mobile Responsive */
     @media (max-width: 768px) {
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+      #map {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 1;
+      }
       .panel {
-        left: 12px;
-        top: 12px;
-        right: 12px;
+        left: 0;
+        top: 0;
+        right: 0;
         min-width: unset;
         max-width: unset;
-        width: calc(100% - 24px);
-        padding: 16px;
+        width: 100vw;
+        padding: 12px;
+        z-index: 1002;
+        box-sizing: border-box;
+        border-radius: 0 0 var(--border-radius) var(--border-radius);
       }
-      
       .panel.collapsed {
-        transform: translateY(-80%);
+        transform: translateY(-90%);
         opacity: 0.9;
       }
-      
       .legend {
-        left: 12px;
-        right: 12px;
-        bottom: 12px;
-        width: calc(100% - 24px);
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100vw;
         max-width: unset;
+        z-index: 1002;
+        box-sizing: border-box;
+        border-radius: var(--border-radius) var(--border-radius) 0 0;
+        padding: 12px;
       }
-      
       .row {
         flex-direction: column;
         align-items: stretch;
       }
-      
       .btn {
         justify-content: center;
         width: 100%;
       }
-      
       .toggle-panel {
         display: flex;
         top: 12px;
         left: auto;
         right: 12px;
         transform: none;
+        z-index: 1003;
       }
     }
     
@@ -294,6 +311,20 @@
       
       .stats {
         font-size: 13px;
+      }
+    }
+
+    .leaflet-control-zoom {
+      z-index: 1100 !important;
+    }
+
+    @media (max-width: 768px) {
+      .leaflet-control-zoom {
+        top: 70px !important; /* décale les boutons sous le panel */
+        left: 12px !important;
+        right: auto !important;
+        position: absolute !important;
+        z-index: 1100 !important;
       }
     }
   </style>
@@ -498,7 +529,7 @@
       })
     };
 
-    tileLayers['Satellite'].addTo(map);
+    tileLayers['OpenStreetMap'].addTo(map);
     L.control.layers(tileLayers).addTo(map);
 
     // Mahajanga city bounds - properly centered on the actual city location
@@ -561,7 +592,7 @@
 
       try {
         // Batch requests to avoid overwhelming the API
-        const batchSize = 10;
+        const batchSize = 5; // Réduit la taille du batch pour limiter les requêtes simultanées
         const results = [];
         
         for (let batch = 0; batch < Math.ceil(nx * ny / batchSize); batch++) {
@@ -578,9 +609,9 @@
           const batchResults = await Promise.all(batchPromises);
           results.push(...batchResults);
           
-          // Small delay between batches to be nice to the API
+          // Augmente le délai entre les batches pour éviter l'erreur 429
           if (batch < Math.ceil(nx * ny / batchSize) - 1) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 600)); // 600ms d'attente entre chaque batch
           }
         }
 
