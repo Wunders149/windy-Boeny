@@ -377,8 +377,14 @@
     <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">Légende des vents</div>
     <div style="font-size: 12px; line-height: 1.4;">
       <div>• Particules animées = direction du vent</div>
-      <div>• Couleurs = vitesse (bleu → rouge)</div>
-      <div>• Zone couverte: Ville de Mahajanga</div>
+      <div>• Couleurs des flèches ou particules :</div>
+      <div style="margin-left: 12px;">
+        <span style="color: #3288bd;">Bleu</span> = vent faible<br>
+        <span style="color: #fee08b;">Jaune</span> = vent modéré<br>
+        <span style="color: #f46d43;">Orange</span> = vent fort<br>
+        <span style="color: #d53e4f;">Rouge</span> = vent très fort
+      </div>
+      <div style="margin-top: 8px;">• Zone couverte : Ville de Mahajanga</div>
     </div>
     <div style="font-size: 11px; opacity: 0.7; margin-top: 8px; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 8px;">
       Source: Open-Meteo API • Mahajanga, Madagascar
@@ -592,7 +598,7 @@
 
       try {
         // Batch requests to avoid overwhelming the API
-        const batchSize = 5; // Réduit la taille du batch pour limiter les requêtes simultanées
+        const batchSize = 5;
         const results = [];
         
         for (let batch = 0; batch < Math.ceil(nx * ny / batchSize); batch++) {
@@ -609,9 +615,9 @@
           const batchResults = await Promise.all(batchPromises);
           results.push(...batchResults);
           
-          // Augmente le délai entre les batches pour éviter l'erreur 429
+          // Attente de 7 minutes entre chaque batch d'appels API
           if (batch < Math.ceil(nx * ny / batchSize) - 1) {
-            await new Promise(resolve => setTimeout(resolve, 600)); // 600ms d'attente entre chaque batch
+            await new Promise(resolve => setTimeout(resolve, 7 * 60 * 1000)); // 7 minutes
           }
         }
 
