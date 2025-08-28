@@ -1,4 +1,4 @@
-# Météo Marine – Région Boeny (Enhanced)
+# Météo Marine – Région Boeny 
 
 An interactive **marine weather map** focused on **Mahajanga, Madagascar**, displaying real-time wind speed and direction with animated particles.
 
@@ -46,6 +46,7 @@ Feel free to submit issues, suggest features, or send pull requests to improve t
 
 ## License
 
-MIT License © 2025 \ Philibert RAZAFIMAHEFA
-If you want, I can also make a **shorter, GitHub-ready version under 350 words** that’s snappy but still informative. Do you want me to do that?
+MIT License © 2025 \Philibert RAZAFIMAHEFA 
+
 ```
+ 
