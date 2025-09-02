@@ -394,55 +394,122 @@
   <div class="toast" id="toast"></div>
 
   <script>
+    // --- Localisation / Traductions (fr par défaut, support de base pour mg) ---
+    const LANG = 'fr'; // change to 'mg' to test Malagasy
+    const TEXT = {
+      fr: {
+        tryingCdn: "Tentative de chargement du CDN alternatif pour leaflet-velocity…",
+        allCdnFailed: "Tous les CDN ont échoué — utilisation de la visualisation personnalisée des vents",
+        detailedError: "Erreur détaillée:",
+        cacheReadFailed: "Lecture du cache échouée",
+        cacheWriteFailed: "Échec de l'écriture du cache",
+        pointFetchError: "Erreur lors de la récupération d'un point",
+        windData: "Données vent:",
+        maxVelocity: "Vitesse max:",
+        velocityAdded: "Couche vent ajoutée à la carte",
+        velocityFailed: "La couche velocity a échoué:",
+        usingCustom: "Utilisation de la visualisation de secours (personnalisée)",
+        tryingAltCdn: "Essai d'un CDN alternatif pour leaflet-velocity…"
+      },
+      mg: {
+        tryingCdn: "Miezaka mampakatra CDN hafa ho an'ny leaflet-velocity…",
+        allCdnFailed: "Tsy nahomby ny CDN rehetra — mampiasa sary rivotra mahazatra",
+        detailedError: "Lesona fahadisoana:",
+        cacheReadFailed: "Tsy afaka namaky ny cache",
+        cacheWriteFailed: "Tsy afaka nanoratra ny cache",
+        pointFetchError: "Diso tamin'ny fakana teboka",
+        windData: "Angon'ny rivotra:",
+        maxVelocity: "Hafainganam-pandeha ambony indrindra:",
+        velocityAdded: "Nampiana sarimihetsika rivotra tamin'ny sarintany",
+        velocityFailed: "Tsy nety ny sosona velocity:",
+        usingCustom: "Mampiasa fomba fijery hafa (compatibilité)"
+      }
+    };
+    function t(key) { return (TEXT[LANG] && TEXT[LANG][key]) || key; }
+    // --- end localisation ---
+
     // Fallback function to load velocity library from alternative sources
     function loadVelocityFallback() {
-      console.log('Trying alternative CDN for leaflet-velocity...');
+      console.log(t('tryingCdn'));
       const script = document.createElement('script');
       script.src = 'https://unpkg.com/leaflet-velocity@1.4.1/dist/leaflet-velocity.min.js';
       script.onerror = function() {
-        console.log('All CDN sources failed, using custom wind visualization');
+        console.log(t('allCdnFailed'));
         window.velocityLibraryFailed = true;
       };
       document.head.appendChild(script);
     }
-
+ 
     // Custom wind visualization when velocity library is not available
-    function createCustomWindLayer(windData, maxVelocity) {
+    function createCustomWindLayer(windData, maxVelocity, options = {}) {
       if (!windData || windData.length < 2) return null;
-      
-      const uData = windData[0].data;
-      const vData = windData[1].data;
-      const header = windData[0].header;
-      
-      // Create a canvas overlay for wind visualization
-      const canvas = document.createElement('canvas');
-      const canvasOverlay = L.canvasLayer = L.canvasLayer || L.Layer.extend({
-        initialize: function(options) {
-          L.Layer.prototype.initialize.call(this, options);
-          this._canvas = canvas;
-          this._ctx = canvas.getContext('2d');
+      const uData = windData[0].data || [];
+      const vData = windData[1].data || [];
+      const header = windData[0].header || {};
+
+      const particleMultiplier = options.particleMultiplier ?? 1 / 200; // controls particle count relative to canvas area
+      const maxParticles = options.maxParticles ?? 2000;
+      const sampleStep = Math.max(1, options.sampleStep ?? 1); // use all points by default; set >1 to skip for perf
+      const fadeAlpha = options.fadeAlpha ?? 0.03;
+      const speedScale = options.speedScale ?? 1.0;
+
+      // bilinear sample of (u,v) given lat,lon
+      function sampleUV(lat, lon) {
+        const la1 = Number(header.la1);
+        const lo1 = Number(header.lo1);
+        const dx = Number(header.dx) || 0.01;
+        const dy = Number(header.dy) || -0.01; // may be negative
+        const nx = Number(header.nx) || Math.sqrt(uData.length) || 1;
+        const ny = Number(header.ny) || Math.sqrt(uData.length) || 1;
+
+        const rowF = (la1 - lat) / Math.abs(dy);
+        const colF = (lon - lo1) / dx;
+        const r0 = Math.floor(rowF), c0 = Math.floor(colF);
+        const r1 = Math.min(ny - 1, r0 + 1), c1 = Math.min(nx - 1, c0 + 1);
+        const fr = rowF - r0, fc = colF - c0;
+        function get(arr, r, c) {
+          const idx = (r * nx + c);
+          return arr[idx] ?? 0;
+        }
+        const u00 = get(uData, r0, c0), u10 = get(uData, r0, c1), u01 = get(uData, r1, c0), u11 = get(uData, r1, c1);
+        const v00 = get(vData, r0, c0), v10 = get(vData, r0, c1), v01 = get(vData, r1, c0), v11 = get(vData, r1, c1);
+        const u0 = u00 * (1 - fc) + u10 * fc;
+        const u1 = u01 * (1 - fc) + u11 * fc;
+        const v0 = v00 * (1 - fc) + v10 * fc;
+        const v1 = v01 * (1 - fc) + v11 * fc;
+        const u = u0 * (1 - fr) + u1 * fr;
+        const v = v0 * (1 - fr) + v1 * fr;
+        return { u, v };
+      }
+
+      const CanvasOverlay = L.Layer.extend({
+        initialize: function (opts) {
+          L.setOptions(this, opts);
+          this._canvas = document.createElement('canvas');
+          this._ctx = this._canvas.getContext('2d');
+          this._particles = [];
+          this._frame = null;
         },
-        
-        onAdd: function(map) {
+
+        onAdd: function (map) {
           this._map = map;
           map.getPanes().overlayPane.appendChild(this._canvas);
           this._reset();
-          map.on('viewreset', this._reset, this);
-          map.on('zoom', this._reset, this);
-          this._draw();
+          map.on('viewreset zoomend move moveend resize', this._reset, this);
+          this._initParticles();
+          this._start();
         },
-        
-        onRemove: function(map) {
+
+        onRemove: function (map) {
           map.getPanes().overlayPane.removeChild(this._canvas);
-          map.off('viewreset', this._reset, this);
-          map.off('zoom', this._reset, this);
+          map.off('viewreset zoomend move moveend resize', this._reset, this);
+          this._stop();
         },
-        
-        _reset: function() {
+
+        _reset: function () {
           const bounds = this._map.getBounds();
           const size = this._map.getSize();
           const topLeft = this._map.latLngToLayerPoint(bounds.getNorthWest());
-          
           this._canvas.width = size.x;
           this._canvas.height = size.y;
           this._canvas.style.width = size.x + 'px';
@@ -451,72 +518,81 @@
           this._canvas.style.left = topLeft.x + 'px';
           this._canvas.style.top = topLeft.y + 'px';
           this._canvas.style.pointerEvents = 'none';
+          // re-init particles on resize to keep density
+          this._initParticles();
         },
-        
-        _draw: function() {
+
+        _initParticles: function () {
+          const area = Math.max(1000, this._canvas.width * this._canvas.height);
+          const target = Math.min(maxParticles, Math.round(area * particleMultiplier));
+          const particles = this._particles;
+          particles.length = 0;
+          for (let i = 0; i < target; i++) {
+            particles.push(this._createParticle());
+          }
+        },
+
+        _createParticle: function () {
+          // random screen position
+          const x = Math.random() * this._canvas.width;
+          const y = Math.random() * this._canvas.height;
+          return { x, y, age: Math.random() * 100, maxAge: 100 + Math.random() * 100 };
+        },
+
+        _start: function () {
+          if (this._frame) return;
+          const step = (time) => {
+            this._frame = requestAnimationFrame(step);
+            this._animate();
+          };
+          this._frame = requestAnimationFrame(step);
+        },
+
+        _stop: function () {
+          if (this._frame) cancelAnimationFrame(this._frame);
+          this._frame = null;
+        },
+
+        _animate: function () {
           const ctx = this._ctx;
-          ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
-          
-          // Draw wind arrows
-          for (let i = 0; i < header.ny; i += 2) {
-            for (let j = 0; j < header.nx; j += 2) {
-              const idx = i * header.nx + j;
-              const u = uData[idx];
-              const v = vData[idx];
-              const speed = Math.sqrt(u * u + v * v);
-              
-              if (speed > 0.5) {
-                const lat = header.la1 - i * Math.abs(header.dy);
-                const lon = header.lo1 + j * header.dx;
-                const point = this._map.latLngToLayerPoint([lat, lon]);
-                
-                // Color based on speed
-                const intensity = Math.min(speed / maxVelocity, 1);
-                const hue = 240 - (intensity * 120); // Blue to red
-                ctx.strokeStyle = `hsl(${hue}, 70%, 50%)`;
-                ctx.lineWidth = 2;
-                
-                // Calculate arrow direction
-                const angle = Math.atan2(u, v);
-                const length = 20;
-                
-                // Draw arrow
-                ctx.beginPath();
-                ctx.moveTo(point.x, point.y);
-                ctx.lineTo(
-                  point.x + length * Math.sin(angle),
-                  point.y + length * Math.cos(angle)
-                );
-                ctx.stroke();
-                
-                // Draw arrowhead
-                const headLength = 8;
-                const headAngle = Math.PI / 6;
-                ctx.beginPath();
-                ctx.moveTo(
-                  point.x + length * Math.sin(angle),
-                  point.y + length * Math.cos(angle)
-                );
-                ctx.lineTo(
-                  point.x + length * Math.sin(angle) - headLength * Math.sin(angle - headAngle),
-                  point.y + length * Math.cos(angle) - headLength * Math.cos(angle - headAngle)
-                );
-                ctx.moveTo(
-                  point.x + length * Math.sin(angle),
-                  point.y + length * Math.cos(angle)
-                );
-                ctx.lineTo(
-                  point.x + length * Math.sin(angle) - headLength * Math.sin(angle + headAngle),
-                  point.y + length * Math.cos(angle) - headLength * Math.cos(angle + headAngle)
-                );
-                ctx.stroke();
-              }
+          const w = this._canvas.width, h = this._canvas.height;
+          // draw translucent fade to create trails
+          ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fillRect(0, 0, w, h);
+          ctx.globalCompositeOperation = 'lighter';
+
+          for (let p of this._particles) {
+            // convert particle screen pos to lat/lon
+            const ll = this._map.layerPointToLatLng([p.x, p.y]);
+            const { u, v } = sampleUV(ll.lat, ll.lng);
+            // map wind vector to screen movement (simple projection)
+            const angle = Math.atan2(u, v);
+            const speed = Math.sqrt(u * u + v * v) * speedScale;
+            const dx = (Math.sin(angle) * speed) * 0.5;
+            const dy = (Math.cos(angle) * speed) * 0.5;
+            p.x += dx;
+            p.y += dy;
+            p.age += 1;
+            // wrap / reset if out of bounds or too old
+            if (p.x < 0 || p.x >= w || p.y < 0 || p.y >= h || p.age > p.maxAge) {
+              Object.assign(p, this._createParticle());
+              continue;
             }
+            // draw particle
+            const intensity = Math.min(1, speed / (maxVelocity || 10));
+            const hue = 240 - intensity * 180;
+            ctx.strokeStyle = `hsl(${hue},70%,60%)`;
+            ctx.lineWidth = Math.max(1, 1.5 * intensity);
+            ctx.beginPath();
+            ctx.moveTo(p.x - dx, p.y - dy);
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
           }
         }
       });
-      
-      return new canvasOverlay();
+
+      return new CanvasOverlay();
     }
     // Enhanced map initialization focused on Mahajanga city
     const map = L.map('map', { 
@@ -561,6 +637,50 @@
       setTimeout(() => $toast.style.display = 'none', ms);
     }
 
+    // Map low-level errors to user-friendly French messages
+    function mapErrorToUserMessage(err) {
+      // log full details for debugging (localisé)
+      console.error(t('detailedError'), err);
+
+      if (!err) return 'Erreur inconnue. Voir la console pour les détails.';
+
+      // AbortError (timeout)
+      if (err.name === 'AbortError') return 'La requête a expiré. Veuillez réessayer.';
+
+      const msg = String(err.message || err);
+
+      if (msg.includes('HTTP')) {
+        const codeMatch = msg.match(/HTTP\s*(\d{3})/);
+        const code = codeMatch ? Number(codeMatch[1]) : null;
+        switch (code) {
+          case 429:
+            return 'Trop de requêtes — veuillez réessayer plus tard.';
+          case 400:
+            return 'Requête invalide vers le serveur.';
+          case 401:
+          case 403:
+            return "Accès refusé par l'API.";
+          case 404:
+            return "Ressource introuvable (404).";
+          case 500:
+          case 502:
+          case 503:
+          case 504:
+            return "Erreur serveur — veuillez réessayer ultérieurement.";
+          default:
+            return `Erreur serveur (${code || 'inconnu'}). Voir la console pour plus de détails.`;
+        }
+      }
+
+      // network-level failures
+      if (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('networkerror')) {
+        return "Impossible de contacter le serveur météo. Vérifiez votre connexion réseau.";
+      }
+
+      // fallback
+      return 'Erreur lors du chargement des données — voir la console pour les détails.';
+    }
+    
     function buildGrid(n) {
       const latStep = (maxLat - minLat) / (n - 1);
       const lonStep = (maxLon - minLon) / (n - 1);
@@ -591,37 +711,103 @@
       return res.json();
     }
 
+    // --- LocalStorage cache helpers (simple recent-grid cache) ---
+    const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+    function cacheKeyForGrid(n) {
+      return `windy_cache:${minLat},${maxLat},${minLon},${maxLon}:n=${n}`;
+    }
+
+    function loadCachedGrid(n) {
+      try {
+        const key = cacheKeyForGrid(n);
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const entry = JSON.parse(raw);
+        if (!entry || !entry.ts) return null;
+        if ((Date.now() - entry.ts) > CACHE_TTL_MS) {
+          localStorage.removeItem(key);
+          return null;
+        }
+        return entry.payload;
+      } catch (e) {
+        console.warn(t('cacheReadFailed'), e);
+        return null;
+      }
+    }
+
+    function saveCachedGrid(n, payload) {
+      try {
+        const key = cacheKeyForGrid(n);
+        const entry = { ts: Date.now(), payload };
+        localStorage.setItem(key, JSON.stringify(entry));
+      } catch (e) {
+        console.warn(t('cacheWriteFailed'), e);
+      }
+    }
+    // --- end cache helpers ---
+
     async function fetchGridData(n) {
+      // try cache first
+      const cached = loadCachedGrid(n);
+      if (cached) {
+        // show quick info that cached data is used
+        $info.innerHTML = `Données récentes en cache — affichage instantané`;
+        return cached;
+      }
+
       const { lats, lons, latStep, lonStep, nx, ny } = buildGrid(n);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000); // Increased timeout
 
       try {
         // Batch requests to avoid overwhelming the API
-        const batchSize = 5;
-        const results = [];
-        
-        for (let batch = 0; batch < Math.ceil(nx * ny / batchSize); batch++) {
-          const batchPromises = [];
+        const batchSize = 6;                    // concurrent requests per batch
+        const interBatchDelay = 1200;           // 1.2s delay between batches (API-friendly)
+        const totalPoints = nx * ny;
+        const totalBatches = Math.ceil(totalPoints / batchSize);
+        const results = new Array(totalPoints).fill(null);
+
+        let fetchedPoints = 0;
+
+        for (let batch = 0; batch < totalBatches; batch++) {
           const start = batch * batchSize;
-          const end = Math.min(start + batchSize, nx * ny);
-          
+          const end = Math.min(start + batchSize, totalPoints);
+          const batchPromises = [];
+
           for (let idx = start; idx < end; idx++) {
             const i = Math.floor(idx / nx);
             const j = idx % nx;
-            batchPromises.push(fetchPoint(lats[i], lons[j], controller));
+            // use existing fetchPoint (with controller)
+            batchPromises.push(
+              fetchPoint(lats[i], lons[j], controller)
+                .then(data => ({ idx, data }))
+                .catch(err => ({ idx, err }))
+            );
           }
-          
+
+          // update UI progress
+          $info.innerHTML = `Chargement des données… Traitement du batch ${batch + 1} / ${totalBatches} (<strong>${fetchedPoints}/${totalPoints}</strong> points) <span class="spinner"></span>`;
+
           const batchResults = await Promise.all(batchPromises);
-          results.push(...batchResults);
-          
-          // Attente de 7 minutes entre chaque batch d'appels API
-          if (batch < Math.ceil(nx * ny / batchSize) - 1) {
-            await new Promise(resolve => setTimeout(resolve, 7 * 60 * 1000)); // 7 minutes
+          for (const r of batchResults) {
+            if (r && r.err) {
+              console.warn(t('pointFetchError'), r.err);
+              results[r.idx] = null;
+            } else {
+              results[r.idx] = r.data;
+              fetchedPoints++;
+            }
+          }
+
+          // brief pause between batches to respect rate limits
+          if (batch < totalBatches - 1) {
+            await new Promise(resolve => setTimeout(resolve, interBatchDelay));
           }
         }
 
-        const times = results[0]?.hourly?.time || [];
+        // Validate at least one result
+        const times = results.find(r => r && r.hourly && r.hourly.time)?.hourly?.time || [];
         if (!times.length) throw new Error('Données horaires indisponibles');
 
         const now = new Date();
@@ -673,7 +859,12 @@
           { header: { ...headerBase, parameterNumber: 3, parameterNumberName: 'northward_wind' }, data: vs }
         ];
 
-        return { windData, avgSpeed, count, total: nx * ny, maxSpeed, refTimeIso };
+        const payload = { windData, avgSpeed, count, total: nx * ny, maxSpeed, refTimeIso };
+
+        // persist to localStorage for faster subsequent loads
+        try { saveCachedGrid(n, payload); } catch (e) { /* ignore */ }
+
+        return payload;
       } finally {
         clearTimeout(timeout);
       }
@@ -709,9 +900,9 @@
         velocityLayer = null;
       }
       
-      console.log('Wind data:', windData);
-      console.log('Max velocity:', maxVelocity);
-      
+      console.log(t('windData'), windData);
+      console.log(t('maxVelocity'), maxVelocity);
+       
       // Try to use leaflet-velocity if available
       if (L.velocityLayer && !window.velocityLibraryFailed) {
         try {
@@ -740,16 +931,16 @@
           });
           
           velocityLayer.addTo(map);
-          console.log('Velocity layer added to map');
+          console.log(t('velocityAdded'));
           toast('Animation des vents activée');
           return;
         } catch (err) {
-          console.error('Velocity layer failed:', err);
+          console.error(t('velocityFailed'), err);
         }
       }
       
       // Fallback to custom wind visualization
-      console.log('Using custom wind visualization');
+      console.log(t('usingCustom'));
       velocityLayer = createCustomWindLayer(windData, maxVelocity);
       if (velocityLayer) {
         velocityLayer.addTo(map);
@@ -767,9 +958,10 @@
         renderVelocity(payload.windData, payload.maxSpeed);
         toast(`Données vent mises à jour (${payload.count} points)`);
       } catch (err) {
-        console.error('Erreur lors du chargement:', err);
-        $info.innerHTML = `<div style="color: #dc2626;">Erreur: ${err.message}</div>`;
-        toast('Échec du chargement des données', 4000, 'error');
+        // show friendly message to user, but keep full error in console for debugging
+        const friendly = mapErrorToUserMessage(err);
+        $info.innerHTML = `<div style="color: #dc2626;">${friendly}</div>`;
+        toast(friendly, 4500, 'error');
       } finally {
         document.getElementById('refresh-btn').disabled = false;
       }
