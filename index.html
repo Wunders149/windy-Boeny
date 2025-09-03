@@ -763,7 +763,7 @@
       try {
         // Batch requests to avoid overwhelming the API
         const batchSize = 6;                    // concurrent requests per batch
-        const interBatchDelay = 1200;           // 1.2s delay between batches (API-friendly)
+        const interBatchDelay = 1000 + Math.round(Math.random() * 1000); // 1–2s
         const totalPoints = nx * ny;
         const totalBatches = Math.ceil(totalPoints / batchSize);
         const results = new Array(totalPoints).fill(null);
@@ -778,27 +778,37 @@
           for (let idx = start; idx < end; idx++) {
             const i = Math.floor(idx / nx);
             const j = idx % nx;
-            // use existing fetchPoint (with controller)
+
             batchPromises.push(
               fetchPoint(lats[i], lons[j], controller)
-                .then(data => ({ idx, data }))
-                .catch(err => ({ idx, err }))
+                .then(data => {
+                  const idxRes = i * nx + j;
+                  // take the nearest hour (safe guard)
+                  const hourIdx = 0;
+                  const speedVal = Number(data?.hourly?.wind_speed_10m?.[hourIdx]);
+                  const dirVal = Number(data?.hourly?.wind_direction_10m?.[hourIdx]);
+                  if (Number.isFinite(speedVal) && Number.isFinite(dirVal)) {
+                    const { u, v } = uvFromSpeedDir(speedVal, dirVal);
+                    results[idxRes] = { u, v, s: speedVal };
+                    fetchedPoints++;
+                  } else {
+                    results[idxRes] = null;
+                  }
+                  // update small progress indicator
+                  $info.innerHTML = `Chargement des données… Traitement du batch ${batch + 1} / ${totalBatches} (<strong>${fetchedPoints}/${totalPoints}</strong> points) <span class="spinner"></span>`;
+                  return null;
+                })
+                .catch(err => {
+                  console.warn(t('pointFetchError'), lats[i], lons[j], err);
+                  const idxRes = i * nx + j;
+                  results[idxRes] = null;
+                  return null;
+                })
             );
           }
 
-          // update UI progress
-          $info.innerHTML = `Chargement des données… Traitement du batch ${batch + 1} / ${totalBatches} (<strong>${fetchedPoints}/${totalPoints}</strong> points) <span class="spinner"></span>`;
-
-          const batchResults = await Promise.all(batchPromises);
-          for (const r of batchResults) {
-            if (r && r.err) {
-              console.warn(t('pointFetchError'), r.err);
-              results[r.idx] = null;
-            } else {
-              results[r.idx] = r.data;
-              fetchedPoints++;
-            }
-          }
+          // wait for the current batch to finish
+          await Promise.all(batchPromises);
 
           // brief pause between batches to respect rate limits
           if (batch < totalBatches - 1) {
@@ -806,39 +816,19 @@
           }
         }
 
-        // Validate at least one result
-        const times = results.find(r => r && r.hourly && r.hourly.time)?.hourly?.time || [];
-        if (!times.length) throw new Error('Données horaires indisponibles');
+        clearTimeout(timeout);
 
-        const now = new Date();
-        let currentIndex = times.findIndex(t => new Date(t) >= now);
-        if (currentIndex === -1) currentIndex = times.length - 1;
-        if (currentIndex > 0) currentIndex -= 1;
+        // Build arrays expected by velocity/custom layer
+        const uData = results.map(r => r ? r.u : 0);
+        const vData = results.map(r => r ? r.v : 0);
 
-        const us = new Array(nx * ny).fill(0);
-        const vs = new Array(nx * ny).fill(0);
-        let sumSpeed = 0, count = 0, maxSpeed = 0;
-
-        let k = 0;
-        for (let i = 0; i < ny; i++) {
-          for (let j = 0; j < nx; j++) {
-            const r = results[k++];
-            const speeds = r?.hourly?.wind_speed_10m || [];
-            const dirs = r?.hourly?.wind_direction_10m || [];
-            const s = Number(speeds[currentIndex]);
-            const d = Number(dirs[currentIndex]);
-            if (Number.isFinite(s) && Number.isFinite(d)) {
-              const { u, v } = uvFromSpeedDir(s, d);
-              us[i * nx + j] = u;
-              vs[i * nx + j] = v;
-              sumSpeed += s; count++;
-              if (s > maxSpeed) maxSpeed = s;
-            }
-          }
-        }
-
-        const avgSpeed = count ? sumSpeed / count : 0;
-        const refTimeIso = new Date(times[currentIndex]).toISOString();
+        // compute simple stats
+        const speeds = results.filter(r => r && Number.isFinite(r.s)).map(r => r.s);
+        const count = speeds.length;
+        const sumSpeed = speeds.reduce((a, b) => a + b, 0);
+        const avgSpeed = count ? (sumSpeed / count) : 0;
+        const maxSpeed = speeds.length ? Math.max(...speeds) : 0;
+        const refTimeIso = new Date().toISOString();
 
         const headerBase = {
           parameterCategory: 2,
@@ -855,8 +845,8 @@
         };
 
         const windData = [
-          { header: { ...headerBase, parameterNumber: 2, parameterNumberName: 'eastward_wind' }, data: us },
-          { header: { ...headerBase, parameterNumber: 3, parameterNumberName: 'northward_wind' }, data: vs }
+          { header: { ...headerBase, parameterNumber: 2, parameterNumberName: 'eastward_wind' }, data: uData },
+          { header: { ...headerBase, parameterNumber: 3, parameterNumberName: 'northward_wind' }, data: vData }
         ];
 
         const payload = { windData, avgSpeed, count, total: nx * ny, maxSpeed, refTimeIso };
@@ -864,9 +854,15 @@
         // persist to localStorage for faster subsequent loads
         try { saveCachedGrid(n, payload); } catch (e) { /* ignore */ }
 
+        // final UI update
+        $info.innerHTML = `Données mises à jour ✅ (${count}/${totalPoints} valides)`;
+        $time.textContent = new Date(refTimeIso).toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+
         return payload;
-      } finally {
+      } catch (err) {
         clearTimeout(timeout);
+        toast(mapErrorToUserMessage(err), 5000, 'error');
+        throw err;
       }
     }
 
