@@ -1,5 +1,5 @@
-# Météo Marine – Région Boeny
-<img width="512" height="512" alt="android-chrome-512x512" src="https://github.com/user-attachments/assets/e6060740-adf8-4634-9038-7a654159891e" /> 
+# Météo Marine – Région Boeny : windy-boeny
+<img width="1920" height="1040" alt="android-chrome-512x512" src="https://github.com/user-attachments/assets/e6060740-adf8-4634-9038-7a654159891e" /> 
 An interactive **marine weather map** focused on **Mahajanga, Madagascar**, displaying real-time wind speed and direction with animated particles.
 
 ## Features
